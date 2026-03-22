@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16
+    container_name: turnero_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-turnero}
+      POSTGRES_USER: ${POSTGRES_USER:-turnero}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-turnero}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - turnero_pgdata:/var/lib/postgresql/data
+
+volumes:
+  turnero_pgdata:
