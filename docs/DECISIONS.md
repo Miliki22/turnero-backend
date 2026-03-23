@@ -1,5 +1,11 @@
 # Decisions Log
 
+## 2026-03-23
+- Auth etapa 1 implementada como admin-only (`/api/v1/auth/login` y `/api/v1/auth/me`).
+- JWT con claim explícito `token_type` (`access` / `refresh`).
+- `get_current_user` acepta solo `token_type=access`.
+- Bootstrap inicial de admin vía script `scripts/create_admin.py`.
+
 ## 2026-03-20
 - Producto: "Kala Turnos"
 - Repos: turnero-backend / turnero-frontend (plantilla reusable)
