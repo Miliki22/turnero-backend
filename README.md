@@ -55,6 +55,53 @@ curl http://127.0.0.1:8000/api/v1/auth/me \
   -H "Authorization: Bearer <ACCESS_TOKEN>"
 ```
 
+## CRUD Clientes (MVP, admin-only)
+### Crear cliente
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/clients \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "full_name": "Juan Perez",
+    "phone": "+5491112345678",
+    "email": "juan@example.com",
+    "notes": "Cliente frecuente"
+  }'
+```
+
+### Listar clientes activos (default)
+```bash
+curl http://127.0.0.1:8000/api/v1/clients \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+### Listar incluyendo inactivos
+```bash
+curl "http://127.0.0.1:8000/api/v1/clients?include_inactive=true" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+### Obtener cliente por ID
+```bash
+curl http://127.0.0.1:8000/api/v1/clients/1 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+### Actualizar cliente (PATCH)
+```bash
+curl -X PATCH http://127.0.0.1:8000/api/v1/clients/1 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"notes":"Actualizar observaciones","phone":"+5491199998888"}'
+```
+
+### Borrado lógico (soft delete)
+```bash
+curl -X DELETE http://127.0.0.1:8000/api/v1/clients/1 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -i
+```
+
 ## Ejecutar tests
 ```bash
 pytest -q

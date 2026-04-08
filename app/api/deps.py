@@ -39,7 +39,13 @@ def get_current_user(
         raise credentials_exception
 
     user = db.query(User).filter(User.email == email).first()
-    if user is None or not user.is_active or user.role != "admin":
+    if user is None or not user.is_active:
         raise credentials_exception
+
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
 
     return user

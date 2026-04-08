@@ -13,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import app.models.user  # noqa: F401
+import app.models.client  # noqa: F401
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.main import app
@@ -36,9 +37,13 @@ def db_session() -> Session:
     db = SessionLocal()
     try:
         db.execute(text("DELETE FROM users WHERE email LIKE 'test-auth-%'"))
+        db.execute(text("DELETE FROM users WHERE email LIKE 'test-clients-%'"))
+        db.execute(text("DELETE FROM clients WHERE full_name LIKE 'Test Client %'"))
         db.commit()
         yield db
         db.execute(text("DELETE FROM users WHERE email LIKE 'test-auth-%'"))
+        db.execute(text("DELETE FROM users WHERE email LIKE 'test-clients-%'"))
+        db.execute(text("DELETE FROM clients WHERE full_name LIKE 'Test Client %'"))
         db.commit()
     finally:
         db.close()
