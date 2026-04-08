@@ -150,6 +150,41 @@ curl -X DELETE http://127.0.0.1:8000/api/v1/services/1 \
   -i
 ```
 
+## CRUD Turnos (MVP, admin-only)
+`POST /appointments`: si no enviás `end_at`, se calcula con `service.duration_minutes`.
+
+### Login (obtener token)
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@kala.com","password":"TuPasswordSegura123"}'
+```
+
+### Crear turno
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/appointments \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": 1,
+    "service_id": 1,
+    "start_at": "2026-04-10T14:00:00+00:00",
+    "notes": "Turno de prueba"
+  }'
+```
+
+### Listar turnos activos
+```bash
+curl http://127.0.0.1:8000/api/v1/appointments \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+### Listar con filtros
+```bash
+curl "http://127.0.0.1:8000/api/v1/appointments?client_id=1&date_from=2026-04-10T00:00:00+00:00&date_to=2026-04-11T00:00:00+00:00" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
 ## Ejecutar tests
 ```bash
 pytest -q
