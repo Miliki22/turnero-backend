@@ -14,6 +14,7 @@ if str(ROOT_DIR) not in sys.path:
 
 import app.models.user  # noqa: F401
 import app.models.client  # noqa: F401
+import app.models.service  # noqa: F401
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.main import app
@@ -39,11 +40,13 @@ def db_session() -> Session:
         db.execute(text("DELETE FROM users WHERE email LIKE 'test-auth-%'"))
         db.execute(text("DELETE FROM users WHERE email LIKE 'test-clients-%'"))
         db.execute(text("DELETE FROM clients WHERE full_name LIKE 'Test Client %'"))
+        db.execute(text("DELETE FROM services WHERE name LIKE 'Service %'"))
         db.commit()
         yield db
         db.execute(text("DELETE FROM users WHERE email LIKE 'test-auth-%'"))
         db.execute(text("DELETE FROM users WHERE email LIKE 'test-clients-%'"))
         db.execute(text("DELETE FROM clients WHERE full_name LIKE 'Test Client %'"))
+        db.execute(text("DELETE FROM services WHERE name LIKE 'Service %'"))
         db.commit()
     finally:
         db.close()

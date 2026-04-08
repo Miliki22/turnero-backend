@@ -102,6 +102,54 @@ curl -X DELETE http://127.0.0.1:8000/api/v1/clients/1 \
   -i
 ```
 
+
+## CRUD Servicios (MVP, admin-only)
+### Crear servicio
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/services \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Corte de pelo",
+    "description": "Corte clásico",
+    "duration_minutes": 45,
+    "price": "12000.50"
+  }'
+```
+
+### Listar servicios activos (default)
+```bash
+curl http://127.0.0.1:8000/api/v1/services \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+### Listar incluyendo inactivos
+```bash
+curl "http://127.0.0.1:8000/api/v1/services?include_inactive=true" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+### Obtener servicio por ID
+```bash
+curl http://127.0.0.1:8000/api/v1/services/1 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+### Actualizar servicio (PATCH)
+```bash
+curl -X PATCH http://127.0.0.1:8000/api/v1/services/1 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"duration_minutes":60,"price":"15000.00"}'
+```
+
+### Borrado lógico (soft delete)
+```bash
+curl -X DELETE http://127.0.0.1:8000/api/v1/services/1 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -i
+```
+
 ## Ejecutar tests
 ```bash
 pytest -q
