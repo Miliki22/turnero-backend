@@ -20,6 +20,7 @@ class AppointmentCreate(BaseModel):
     end_at: datetime | None = None
     notes: str | None = None
     status: AppointmentStatus = "scheduled"
+    override_schedule: bool = False
 
 
 class AppointmentUpdate(BaseModel):
@@ -34,6 +35,7 @@ class AppointmentUpdate(BaseModel):
     notes: str | None = None
     status: AppointmentStatus | None = None
     is_active: bool | None = None
+    override_schedule: bool | None = None
 
 
 class AppointmentOut(BaseModel):
