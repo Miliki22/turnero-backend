@@ -36,6 +36,40 @@ cp .env.example .env
 ./scripts/alembic.sh upgrade head
 ```
 
+## Reset DB (borrar volumen y recrear)
+```bash
+docker compose down -v
+docker compose up -d
+./scripts/alembic.sh upgrade head
+```
+
+Opcional (crear admin):
+```bash
+PYTHONPATH=. .venv/bin/python scripts/create_admin.py --email admin@kala.com --password "TuPasswordSegura123"
+```
+
+## Comandos Windows (PowerShell)
+### Levantar PostgreSQL
+```powershell
+docker compose up -d
+```
+
+### Aplicar migraciones (equivalente)
+```powershell
+$env:PYTHONPATH="."
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+### Crear admin
+```powershell
+$env:PYTHONPATH="."
+.\.venv\Scripts\python.exe scripts\create_admin.py --email admin@kala.com --password "TuPasswordSegura123"
+```
+
+## Endpoints útiles
+- Health: `GET /health`
+- Swagger: `/docs`
+
 ## Auth admin-only (Etapa 1)
 ### Crear primer admin
 ```bash
