@@ -81,6 +81,26 @@ $env:PYTHONPATH="."
 - Health: `GET /health`
 - Swagger: `/docs`
 
+## Google Calendar Sync (admin)
+1. Crear credenciales OAuth 2.0 (Web application) en Google Cloud Console.
+2. Guardar el archivo en `credentials/google_oauth/client_secret.json`.
+3. Configurar variables:
+```bash
+GOOGLE_OAUTH_CLIENT_SECRETS_FILE=credentials/google_oauth/client_secret.json
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/api/v1/integrations/google/callback
+GOOGLE_CALENDAR_ID=primary
+GOOGLE_SYNC_ENABLED=true
+```
+4. Conectar desde API:
+- `GET /api/v1/integrations/google/connect`
+- `GET /api/v1/integrations/google/callback`
+- `GET /api/v1/integrations/google/status`
+- `POST /api/v1/integrations/google/disconnect`
+
+Notas:
+- No commitear secretos OAuth.
+- `.gitignore` ya excluye `credentials/google_oauth/*.json`.
+
 ## Auth admin-only (Etapa 1)
 ### Crear primer admin
 ```bash

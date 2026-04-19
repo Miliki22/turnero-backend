@@ -610,3 +610,47 @@ def test_client_cannot_delete_appointment(client: TestClient, db_session: Sessio
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Not enough permissions"
+
+
+def test_create_appointment_triggers_google_sync_when_enabled(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    """Appointment creation tries to create Google Calendar event when enabled."""
+    create_admin(db_session, "test-appointments-google-sync@example.com", "secret123")
+    auth_headers = create_auth_headers(client, "test-appointments-google-sync@example.com", "secret123")
+    db_client = create_client(db_session, "Test Client Appointment Google Sync")
+    db_service = create_service(db_session, "Service Appointment Google Sync", duration_minutes=60)
+    start_at = _next_weekday_at(weekday=0, hour=15, minute=0)
+    calls: list[dict[str, object]] = []
+
+    class FakeGoogleClient:
+        def create_event(self, event_payload: dict[str, object]) -> str:
+            calls.append(event_payload)
+            return "google-event-123"
+
+    monkeypatch.setattr("app.services.appointment_service.settings.google_sync_enabled", True)
+    monkeypatch.setattr(
+        "app.services.appointment_service.get_connected_admin_integration",
+        lambda db: object(),
+    )
+    monkeypatch.setattr(
+        "app.services.appointment_service.get_google_calendar_client",
+        lambda db, integration: FakeGoogleClient(),
+    )
+
+    response = client.post(
+        "/api/v1/appointments",
+        headers=auth_headers,
+        json={
+            "client_id": db_client.id,
+            "service_id": db_service.id,
+            "start_at": start_at.isoformat(),
+        },
+    )
+
+    assert response.status_code == 201
+    assert len(calls) == 1
+    assert calls[0]["summary"] == "Service Appointment Google Sync - Test Client Appointment Google Sync"
+    assert response.json()["google_event_id"] == "google-event-123"

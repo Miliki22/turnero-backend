@@ -48,6 +48,7 @@ class AppointmentOut(BaseModel):
     service_id: int
     start_at: datetime
     end_at: datetime
+    google_event_id: str | None = None
     status: AppointmentStatus
     notes: str | None
     is_active: bool

@@ -14,6 +14,10 @@ from app.models.service import Service
 from app.models.user import User
 from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
 from app.services.email_service import send_appointment_confirmation_email
+from app.services.google_calendar_service import (
+    get_connected_admin_integration,
+    get_google_calendar_client,
+)
 
 AR_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 BUFFER_MINUTES = 15
@@ -148,6 +152,7 @@ def create_appointment(db: Session, payload: AppointmentCreate) -> Appointment:
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+    _sync_google_create_event(db=db, appointment=appointment)
     return appointment
 
 
@@ -176,6 +181,81 @@ def send_client_created_appointment_notification(db: Session, appointment: Appoi
         )
     except Exception:  # pragma: no cover
         logger.exception("Failed to send appointment confirmation email")
+
+
+def _build_google_event_payload(db: Session, appointment: Appointment) -> dict[str, object]:
+    """Build Google Calendar event payload from appointment data."""
+    client = db.query(Client).filter(Client.id == appointment.client_id).first()
+    service = db.query(Service).filter(Service.id == appointment.service_id).first()
+    client_name = client.full_name if client is not None else "Cliente"
+    service_name = service.name if service is not None else "Turno"
+    return {
+        "summary": f"{service_name} - {client_name}",
+        "description": f"Cliente: {client_name}\nServicio: {service_name}",
+        "start": {"dateTime": appointment.start_at.isoformat()},
+        "end": {"dateTime": appointment.end_at.isoformat()},
+    }
+
+
+def _sync_google_create_event(db: Session, appointment: Appointment) -> None:
+    """Create Google Calendar event when integration is enabled and connected."""
+    if not settings.google_sync_enabled:
+        return
+
+    integration = get_connected_admin_integration(db=db)
+    if integration is None:
+        logger.warning("Google sync enabled but admin integration is not connected")
+        return
+
+    try:
+        client = get_google_calendar_client(db=db, integration=integration)
+        event_id = client.create_event(_build_google_event_payload(db=db, appointment=appointment))
+        appointment.google_event_id = event_id
+        db.add(appointment)
+        db.commit()
+    except Exception:
+        logger.warning("Failed to create Google Calendar event for appointment id=%s", appointment.id, exc_info=True)
+
+
+def _sync_google_update_event(db: Session, appointment: Appointment) -> None:
+    """Update linked Google Calendar event if sync is enabled and event exists."""
+    if not settings.google_sync_enabled:
+        return
+    if not appointment.google_event_id:
+        return
+
+    integration = get_connected_admin_integration(db=db)
+    if integration is None:
+        logger.warning("Google sync enabled but admin integration is not connected")
+        return
+
+    try:
+        client = get_google_calendar_client(db=db, integration=integration)
+        client.update_event(
+            google_event_id=appointment.google_event_id,
+            event_payload=_build_google_event_payload(db=db, appointment=appointment),
+        )
+    except Exception:
+        logger.warning("Failed to update Google Calendar event for appointment id=%s", appointment.id, exc_info=True)
+
+
+def _sync_google_delete_event(db: Session, appointment: Appointment) -> None:
+    """Delete linked Google Calendar event when appointment is deleted."""
+    if not settings.google_sync_enabled:
+        return
+    if not appointment.google_event_id:
+        return
+
+    integration = get_connected_admin_integration(db=db)
+    if integration is None:
+        logger.warning("Google sync enabled but admin integration is not connected")
+        return
+
+    try:
+        client = get_google_calendar_client(db=db, integration=integration)
+        client.delete_event(google_event_id=appointment.google_event_id)
+    except Exception:
+        logger.warning("Failed to delete Google Calendar event for appointment id=%s", appointment.id, exc_info=True)
 
 
 def get_appointment(db: Session, appointment_id: int) -> Appointment:
@@ -263,12 +343,14 @@ def update_appointment(
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
+    _sync_google_update_event(db=db, appointment=appointment)
     return appointment
 
 
 def delete_appointment(db: Session, appointment_id: int) -> None:
     """Soft-delete an appointment by setting is_active to false."""
     appointment = get_appointment(db=db, appointment_id=appointment_id)
+    _sync_google_delete_event(db=db, appointment=appointment)
     appointment.is_active = False
     db.add(appointment)
     db.commit()

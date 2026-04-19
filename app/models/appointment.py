@@ -18,6 +18,7 @@ class Appointment(Base):
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), nullable=False, index=True)
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    google_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="scheduled")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

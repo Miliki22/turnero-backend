@@ -28,3 +28,6 @@ venv/
 
 # --- Alembic / logs ---
 *.log
+
+# Google OAuth (secrets)
+credentials/google_oauth/*.json
