@@ -1,8 +1,10 @@
 """Authentication API tests."""
 
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy.orm import Session
 
+from app.models.client import Client
 from app.models.user import User
 from app.services.auth_service import get_password_hash
 
@@ -75,3 +77,94 @@ def test_me_rejects_refresh_token(client: TestClient, db_session: Session) -> No
     )
 
     assert me_response.status_code == 401
+
+
+def test_register_creates_user_and_client(client: TestClient, db_session: Session) -> None:
+    """Register endpoint creates linked client user/profile and returns tokens."""
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Test Register User",
+            "phone": "+5491111112222",
+            "email": "test-register@example.com",
+            "password": "NewPass123!",
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["token_type"] == "bearer"
+    assert data["access_token"]
+    assert data["refresh_token"]
+
+    user = db_session.query(User).filter(User.email == "test-register@example.com").first()
+    assert user is not None
+    assert user.role == "client"
+    assert user.is_active is True
+
+    linked_client = db_session.query(Client).filter(Client.user_id == user.id).first()
+    assert linked_client is not None
+    assert linked_client.full_name == "Test Register User"
+    assert linked_client.phone == "+5491111112222"
+
+
+def test_forgot_password_always_returns_200(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Forgot-password returns generic success regardless of account existence."""
+    create_admin(db_session, "test-auth-forgot@example.com", "secret123")
+    sent_tokens: list[str] = []
+
+    def fake_send_password_reset_email(to_email: str, token: str) -> None:
+        sent_tokens.append(token)
+
+    monkeypatch.setattr("app.api.v1.routers.auth.send_password_reset_email", fake_send_password_reset_email)
+
+    existing_response = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "test-auth-forgot@example.com"},
+    )
+    missing_response = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "test-auth-missing@example.com"},
+    )
+
+    assert existing_response.status_code == 200
+    assert missing_response.status_code == 200
+    assert existing_response.json()["detail"] == "If the email exists, a password reset link was sent"
+    assert missing_response.json()["detail"] == "If the email exists, a password reset link was sent"
+    assert len(sent_tokens) == 1
+
+
+def test_reset_password_changes_credentials(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset-password updates hash and allows login with new password."""
+    create_admin(db_session, "test-auth-reset@example.com", "oldpass123")
+    sent_tokens: list[str] = []
+
+    def fake_send_password_reset_email(to_email: str, token: str) -> None:
+        sent_tokens.append(token)
+
+    monkeypatch.setattr("app.api.v1.routers.auth.send_password_reset_email", fake_send_password_reset_email)
+
+    forgot_response = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "test-auth-reset@example.com"},
+    )
+    assert forgot_response.status_code == 200
+    assert len(sent_tokens) == 1
+
+    reset_response = client.post(
+        "/api/v1/auth/reset-password",
+        json={"token": sent_tokens[0], "new_password": "newpass123"},
+    )
+    assert reset_response.status_code == 200
+
+    old_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "test-auth-reset@example.com", "password": "oldpass123"},
+    )
+    new_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "test-auth-reset@example.com", "password": "newpass123"},
+    )
+
+    assert old_login.status_code == 401
+    assert new_login.status_code == 200

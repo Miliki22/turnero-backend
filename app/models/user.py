@@ -4,12 +4,17 @@ from datetime import datetime, timezone
 
 from app.db.base import Base
 
+
+ROLE_ADMIN = "admin"
+ROLE_CLIENT = "client"
+
+
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(20), default="admin", nullable=False)
+    role: Mapped[str] = mapped_column(String(20), default=ROLE_ADMIN, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

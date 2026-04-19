@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from jose import jwt
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
@@ -24,12 +24,12 @@ def get_password_hash(password: str) -> str:
 
 
 def authenticate_user(db: Session, email: str, password: str) -> User | None:
-    """Authenticate an admin user by email and password."""
+    """Authenticate an active user by email and password."""
     user = db.query(User).filter(User.email == email).first()
     if user is None:
         return None
 
-    if not user.is_active or user.role != "admin":
+    if not user.is_active:
         return None
 
     if not verify_password(password, user.password_hash):
@@ -61,3 +61,29 @@ def create_refresh_token(subject: str) -> str:
     """Create a JWT refresh token for a subject."""
     expires_delta = timedelta(days=settings.refresh_token_expire_days)
     return _create_token(subject=subject, expires_delta=expires_delta, token_type="refresh")
+
+
+def create_password_reset_token(user_id: int) -> str:
+    """Create a short-lived JWT password reset token for a user."""
+    expires_delta = timedelta(minutes=settings.password_reset_token_expire_minutes)
+    return _create_token(subject=str(user_id), expires_delta=expires_delta, token_type="password_reset")
+
+
+def verify_password_reset_token(token: str) -> int | None:
+    """Decode and validate password reset token payload."""
+    try:
+        payload: dict[str, Any] = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+        )
+    except JWTError:
+        return None
+
+    if payload.get("token_type") != "password_reset":
+        return None
+
+    subject = payload.get("sub")
+    if not isinstance(subject, str) or not subject.isdigit():
+        return None
+    return int(subject)

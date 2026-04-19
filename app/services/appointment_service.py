@@ -1,21 +1,26 @@
 """Business logic for appointments."""
 
+import logging
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.appointment import Appointment
 from app.models.client import Client
 from app.models.service import Service
+from app.models.user import User
 from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
+from app.services.email_service import send_appointment_confirmation_email
 
 AR_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 BUFFER_MINUTES = 15
 ALLOWED_DURATIONS_MINUTES = {60, 90, 120}
 BUSINESS_START = time(hour=9, minute=0)
 BUSINESS_END = time(hour=19, minute=0)
+logger = logging.getLogger(__name__)
 
 
 def _get_active_client(db: Session, client_id: int) -> Client:
@@ -38,7 +43,7 @@ def _validate_range(start_at: datetime, end_at: datetime) -> None:
     """Validate appointment range ordering."""
     if end_at <= start_at:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="end_at must be greater than start_at",
         )
 
@@ -55,7 +60,7 @@ def _validate_duration(start_at_ar: datetime, end_at_ar: datetime) -> None:
     duration_minutes = int((end_at_ar - start_at_ar).total_seconds() // 60)
     if duration_minutes not in ALLOWED_DURATIONS_MINUTES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Duration must be one of: 60, 90, 120 minutes",
         )
 
@@ -67,13 +72,13 @@ def _validate_schedule_window(start_at_ar: datetime, end_at_ar: datetime, overri
 
     if start_at_ar.weekday() > 4 or end_at_ar.weekday() > 4:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Appointments are only allowed Monday to Friday",
         )
 
     if start_at_ar.time() < BUSINESS_START or end_at_ar.time() > BUSINESS_END:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Appointment must be within business hours (09:00-19:00)",
         )
 
@@ -108,6 +113,12 @@ def create_appointment(db: Session, payload: AppointmentCreate) -> Appointment:
 
     If end_at is omitted, it is calculated using service.duration_minutes.
     """
+    if payload.client_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="client_id is required",
+        )
+
     _get_active_client(db=db, client_id=payload.client_id)
     service = _get_active_service(db=db, service_id=payload.service_id)
 
@@ -138,6 +149,33 @@ def create_appointment(db: Session, payload: AppointmentCreate) -> Appointment:
     db.commit()
     db.refresh(appointment)
     return appointment
+
+
+def send_client_created_appointment_notification(db: Session, appointment: Appointment) -> None:
+    """Send appointment confirmation emails after client self-booking."""
+    client = db.query(Client).filter(Client.id == appointment.client_id).first()
+    service = db.query(Service).filter(Service.id == appointment.service_id).first()
+    if client is None or service is None:
+        return
+
+    client_email = client.email
+    if not client_email:
+        user = db.query(User).filter(User.id == client.user_id).first()
+        client_email = user.email if user is not None else ""
+    if not client_email:
+        return
+
+    try:
+        send_appointment_confirmation_email(
+            client_email=client_email,
+            admin_email=settings.admin_notify_email,
+            client_name=client.full_name,
+            service_name=service.name,
+            start_at=appointment.start_at,
+            end_at=appointment.end_at,
+        )
+    except Exception:  # pragma: no cover
+        logger.exception("Failed to send appointment confirmation email")
 
 
 def get_appointment(db: Session, appointment_id: int) -> Appointment:

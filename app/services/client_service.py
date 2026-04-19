@@ -1,18 +1,42 @@
 """Business logic for clients."""
 
+from uuid import uuid4
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.client import Client
+from app.models.user import User
 from app.schemas.client import ClientCreate, ClientUpdate
+from app.services.auth_service import get_password_hash
 
 
 def create_client(db: Session, payload: ClientCreate) -> Client:
     """Create a client record."""
+    email = (payload.email or "").strip().lower()
+    if not email:
+        email = f"client-{uuid4().hex[:20]}@local.invalid"
+
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        user = User(
+            email=email,
+            password_hash=get_password_hash(uuid4().hex),
+            role="client",
+            is_active=True,
+        )
+        db.add(user)
+        db.flush()
+    else:
+        existing_client = db.query(Client).filter(Client.user_id == user.id).first()
+        if existing_client is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
     client = Client(
+        user_id=user.id,
         full_name=payload.full_name,
         phone=payload.phone,
-        email=payload.email,
+        email=email if payload.email else None,
         notes=payload.notes,
         is_active=True,
     )
@@ -42,6 +66,16 @@ def update_client(db: Session, client_id: int, payload: ClientUpdate) -> Client:
     """Update mutable client fields and return the persisted row."""
     client = get_client(db=db, client_id=client_id)
     update_data = payload.model_dump(exclude_unset=True)
+    if "email" in update_data and update_data["email"] is not None:
+        next_email = update_data["email"].strip().lower()
+        duplicate = db.query(User).filter(User.email == next_email, User.id != client.user_id).first()
+        if duplicate is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        user = db.query(User).filter(User.id == client.user_id).first()
+        if user is not None:
+            user.email = next_email
+            db.add(user)
+
     for field, value in update_data.items():
         setattr(client, field, value)
 

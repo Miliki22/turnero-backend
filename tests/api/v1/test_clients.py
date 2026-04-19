@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.client import Client
 from app.models.user import User
-from app.services.auth_service import create_access_token, get_password_hash
+from app.services.auth_service import get_password_hash
 
 
 def create_user(db: Session, email: str, password: str, role: str = "admin") -> User:
@@ -32,9 +32,25 @@ def create_auth_headers(client: TestClient, email: str, password: str) -> dict[s
     return {"Authorization": f"Bearer {token}"}
 
 
+def create_linked_client(db: Session, full_name: str, email: str, is_active: bool = True) -> Client:
+    """Create a client row linked to a dedicated user."""
+    user = create_user(db, email=email, password="secret123", role="client")
+    client = Client(
+        user_id=user.id,
+        full_name=full_name,
+        phone="+5491111110000",
+        email=email,
+        is_active=is_active,
+    )
+    db.add(client)
+    db.commit()
+    db.refresh(client)
+    return client
+
+
 def test_create_client(client: TestClient, db_session: Session) -> None:
-    """Create client endpoint returns 201 and persisted data."""
-    create_user(db_session, "test-clients-create@example.com", "secret123")
+    """Create client endpoint returns 201 and persisted data for admin."""
+    create_user(db_session, "test-clients-create@example.com", "secret123", role="admin")
     headers = create_auth_headers(client, "test-clients-create@example.com", "secret123")
 
     response = client.post(
@@ -43,7 +59,7 @@ def test_create_client(client: TestClient, db_session: Session) -> None:
         json={
             "full_name": "Test Client Create",
             "phone": "+5491111110001",
-            "email": "client-create@example.com",
+            "email": "test-client-create@example.com",
             "notes": "Prefiere contacto por WhatsApp",
         },
     )
@@ -52,21 +68,47 @@ def test_create_client(client: TestClient, db_session: Session) -> None:
     data = response.json()
     assert data["full_name"] == "Test Client Create"
     assert data["phone"] == "+5491111110001"
-    assert data["email"] == "client-create@example.com"
+    assert data["email"] == "test-client-create@example.com"
     assert data["notes"] == "Prefiere contacto por WhatsApp"
     assert data["is_active"] is True
 
 
+def test_non_admin_cannot_create_client(client: TestClient, db_session: Session) -> None:
+    """Non-admin users receive 403 when trying to create a client."""
+    create_user(db_session, "test-clients-create-staff@example.com", "secret123", role="staff")
+    headers = create_auth_headers(client, "test-clients-create-staff@example.com", "secret123")
+
+    response = client.post(
+        "/api/v1/clients",
+        headers=headers,
+        json={
+            "full_name": "Test Client Forbidden",
+            "phone": "+5491111110100",
+            "email": "staff-create@example.com",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions"
+
+
 def test_list_clients_active_only_by_default(client: TestClient, db_session: Session) -> None:
     """List clients excludes inactive rows unless include_inactive is true."""
-    create_user(db_session, "test-clients-list@example.com", "secret123")
+    create_user(db_session, "test-clients-list@example.com", "secret123", role="admin")
     headers = create_auth_headers(client, "test-clients-list@example.com", "secret123")
 
-    active_client = Client(full_name="Test Client Active", phone="+5491111110002", is_active=True)
-    inactive_client = Client(full_name="Test Client Inactive", phone="+5491111110003", is_active=False)
-    db_session.add(active_client)
-    db_session.add(inactive_client)
-    db_session.commit()
+    create_linked_client(
+        db_session,
+        full_name="Test Client Active",
+        email="test-clients-active@example.com",
+        is_active=True,
+    )
+    create_linked_client(
+        db_session,
+        full_name="Test Client Inactive",
+        email="test-clients-inactive@example.com",
+        is_active=False,
+    )
 
     active_response = client.get("/api/v1/clients", headers=headers)
     assert active_response.status_code == 200
@@ -83,21 +125,31 @@ def test_list_clients_active_only_by_default(client: TestClient, db_session: Ses
     assert "Test Client Inactive" in all_names
 
 
+def test_non_admin_cannot_list_clients(client: TestClient, db_session: Session) -> None:
+    """Non-admin authenticated users cannot list clients."""
+    create_user(db_session, "test-clients-list-client@example.com", "secret123", role="client")
+    headers = create_auth_headers(client, "test-clients-list-client@example.com", "secret123")
+
+    response = client.get("/api/v1/clients", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions"
+
+
 def test_update_client(client: TestClient, db_session: Session) -> None:
-    """Patch endpoint updates only provided fields."""
-    create_user(db_session, "test-clients-update@example.com", "secret123")
+    """Patch endpoint updates only provided fields for admin."""
+    create_user(db_session, "test-clients-update@example.com", "secret123", role="admin")
     headers = create_auth_headers(client, "test-clients-update@example.com", "secret123")
 
-    existing = Client(
+    existing = create_linked_client(
+        db_session,
         full_name="Test Client Update",
-        phone="+5491111110004",
-        email="old-email@example.com",
-        notes="Nota inicial",
+        email="test-old-email@example.com",
         is_active=True,
     )
+    existing.notes = "Nota inicial"
     db_session.add(existing)
     db_session.commit()
-    db_session.refresh(existing)
 
     response = client.patch(
         f"/api/v1/clients/{existing.id}",
@@ -109,23 +161,43 @@ def test_update_client(client: TestClient, db_session: Session) -> None:
     data = response.json()
     assert data["full_name"] == "Test Client Update"
     assert data["phone"] == "+5491111119999"
-    assert data["email"] == "old-email@example.com"
+    assert data["email"] == "test-old-email@example.com"
     assert data["notes"] == "Nota actualizada"
 
 
-def test_soft_delete_client(client: TestClient, db_session: Session) -> None:
-    """Delete endpoint performs a soft-delete and returns 204."""
-    create_user(db_session, "test-clients-delete@example.com", "secret123")
-    headers = create_auth_headers(client, "test-clients-delete@example.com", "secret123")
+def test_non_admin_cannot_update_client(client: TestClient, db_session: Session) -> None:
+    """Non-admin users receive 403 when trying to update a client."""
+    create_user(db_session, "test-clients-update-staff@example.com", "secret123", role="staff")
+    headers = create_auth_headers(client, "test-clients-update-staff@example.com", "secret123")
 
-    existing = Client(
-        full_name="Test Client Delete",
-        phone="+5491111110005",
+    existing = create_linked_client(
+        db_session,
+        full_name="Test Client Update Forbidden",
+        email="test-clients-update-forbidden@example.com",
         is_active=True,
     )
-    db_session.add(existing)
-    db_session.commit()
-    db_session.refresh(existing)
+
+    response = client.patch(
+        f"/api/v1/clients/{existing.id}",
+        headers=headers,
+        json={"notes": "Intento staff"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions"
+
+
+def test_soft_delete_client(client: TestClient, db_session: Session) -> None:
+    """Delete endpoint performs a soft-delete and returns 204 for admin."""
+    create_user(db_session, "test-clients-delete@example.com", "secret123", role="admin")
+    headers = create_auth_headers(client, "test-clients-delete@example.com", "secret123")
+
+    existing = create_linked_client(
+        db_session,
+        full_name="Test Client Delete",
+        email="test-clients-delete-linked@example.com",
+        is_active=True,
+    )
 
     response = client.delete(f"/api/v1/clients/{existing.id}", headers=headers)
     assert response.status_code == 204
@@ -135,20 +207,19 @@ def test_soft_delete_client(client: TestClient, db_session: Session) -> None:
     assert existing.is_active is False
 
 
-def test_clients_forbidden_for_non_admin(client: TestClient, db_session: Session) -> None:
-    """Non-admin authenticated user gets forbidden in admin routes."""
-    user = create_user(
-        db_session,
-        "test-clients-non-admin@example.com",
-        "secret123",
-        role="staff",
-    )
-    token = create_access_token(subject=user.email)
+def test_non_admin_cannot_delete_client(client: TestClient, db_session: Session) -> None:
+    """Non-admin users receive 403 when trying to delete a client."""
+    create_user(db_session, "test-clients-delete-staff@example.com", "secret123", role="staff")
+    headers = create_auth_headers(client, "test-clients-delete-staff@example.com", "secret123")
 
-    response = client.get(
-        "/api/v1/clients",
-        headers={"Authorization": f"Bearer {token}"},
+    existing = create_linked_client(
+        db_session,
+        full_name="Test Client Delete Forbidden",
+        email="test-clients-delete-forbidden@example.com",
+        is_active=True,
     )
+
+    response = client.delete(f"/api/v1/clients/{existing.id}", headers=headers)
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Not enough permissions"

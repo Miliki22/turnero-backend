@@ -41,9 +41,22 @@ def create_admin(db: Session, email: str, password: str) -> User:
 
 def create_client(db: Session, full_name: str) -> Client:
     """Insert an active client for tests."""
+    email_slug = full_name.lower().replace(" ", "-")
+    user = User(
+        email=f"test-appointments-client-{email_slug}@example.com",
+        password_hash=get_password_hash("secret123"),
+        role="client",
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
     client = Client(
+        user_id=user.id,
         full_name=full_name,
         phone="+5491111111111",
+        email=user.email,
         is_active=True,
     )
     db.add(client)
@@ -382,3 +395,218 @@ def test_soft_delete_appointment(client: TestClient, db_session: Session) -> Non
 
     db_session.refresh(appointment)
     assert appointment.is_active is False
+
+
+def create_user(db: Session, email: str, password: str, role: str = "admin") -> User:
+    """Insert an active user for tests."""
+    user = User(
+        email=email,
+        password_hash=get_password_hash(password),
+        role=role,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def create_client_user_and_profile(
+    db: Session,
+    *,
+    email: str,
+    password: str,
+    full_name: str,
+) -> tuple[User, Client]:
+    """Create a client user and linked client profile."""
+    user = create_user(db, email=email, password=password, role="client")
+    client = Client(
+        user_id=user.id,
+        full_name=full_name,
+        phone="+5491111119898",
+        email=email,
+        is_active=True,
+    )
+    db.add(client)
+    db.commit()
+    db.refresh(client)
+    return user, client
+
+
+def test_client_get_appointments_me_returns_only_own(client: TestClient, db_session: Session) -> None:
+    """Client /appointments/me returns only appointments for linked profile."""
+    create_admin(db_session, "test-appointments-me-admin@example.com", "secret123")
+    admin_headers = create_auth_headers(client, "test-appointments-me-admin@example.com", "secret123")
+    _, client_one = create_client_user_and_profile(
+        db_session,
+        email="test-appointments-me-client1@example.com",
+        password="secret123",
+        full_name="Test Client Me One",
+    )
+    _, client_two = create_client_user_and_profile(
+        db_session,
+        email="test-appointments-me-client2@example.com",
+        password="secret123",
+        full_name="Test Client Me Two",
+    )
+    service = create_service(db_session, "Service Appointment Me", duration_minutes=60)
+    start_at = _next_weekday_at(weekday=1, hour=10, minute=0)
+
+    client.post(
+        "/api/v1/appointments",
+        headers=admin_headers,
+        json={
+            "client_id": client_one.id,
+            "service_id": service.id,
+            "start_at": start_at.isoformat(),
+        },
+    )
+    client.post(
+        "/api/v1/appointments",
+        headers=admin_headers,
+        json={
+            "client_id": client_two.id,
+            "service_id": service.id,
+            "start_at": (start_at + timedelta(hours=2)).isoformat(),
+        },
+    )
+
+    client_headers = create_auth_headers(client, "test-appointments-me-client1@example.com", "secret123")
+    response = client.get("/api/v1/appointments/me", headers=client_headers)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["client_id"] == client_one.id
+
+
+def test_client_post_appointment_creates_for_self(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    """Client-created appointment is forced to authenticated client's profile."""
+    _, own_client = create_client_user_and_profile(
+        db_session,
+        email="test-appointments-self-book@example.com",
+        password="secret123",
+        full_name="Test Client Self Book",
+    )
+    _, other_client = create_client_user_and_profile(
+        db_session,
+        email="test-appointments-self-book-other@example.com",
+        password="secret123",
+        full_name="Test Client Self Book Other",
+    )
+    service = create_service(db_session, "Service Client Self Book", duration_minutes=60)
+    start_at = _next_weekday_at(weekday=2, hour=11, minute=0)
+    email_calls: list[dict[str, str]] = []
+
+    def fake_send_email(*, to_email: str, subject: str, body: str) -> None:
+        email_calls.append(
+            {
+                "to_email": to_email,
+                "subject": subject,
+                "body": body,
+            }
+        )
+
+    monkeypatch.setattr("app.services.email_service._send_email", fake_send_email)
+
+    client_headers = create_auth_headers(client, "test-appointments-self-book@example.com", "secret123")
+    response = client.post(
+        "/api/v1/appointments",
+        headers=client_headers,
+        json={
+            "client_id": other_client.id,
+            "service_id": service.id,
+            "start_at": start_at.isoformat(),
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["client_id"] == own_client.id
+    assert len(email_calls) == 2
+    recipients = {call["to_email"] for call in email_calls}
+    assert "test-appointments-self-book@example.com" in recipients
+    assert "admin@kala.local" in recipients
+    sample_body = email_calls[0]["body"]
+    assert sample_body.startswith("Turno confirmado")
+    assert "Cliente: Test Client Self Book" in sample_body
+    assert "Servicio: Service Client Self Book" in sample_body
+    assert f"Fecha: {start_at.strftime('%d/%m/%Y')}" in sample_body
+    assert f"Hora: {start_at.strftime('%H:%M')}" in sample_body
+    assert f"Fin: {(start_at + timedelta(minutes=60)).strftime('%H:%M')}" in sample_body
+
+
+def test_client_cannot_update_appointment(client: TestClient, db_session: Session) -> None:
+    """Client users receive 403 when updating appointments."""
+    create_admin(db_session, "test-appointments-update-admin@example.com", "secret123")
+    admin_headers = create_auth_headers(client, "test-appointments-update-admin@example.com", "secret123")
+    db_client = create_client(db_session, "Test Client Appointment Update Forbidden")
+    db_service = create_service(db_session, "Service Appointment Update Forbidden", duration_minutes=60)
+    start_at = _next_weekday_at(weekday=1, hour=11, minute=0)
+
+    create_response = client.post(
+        "/api/v1/appointments",
+        headers=admin_headers,
+        json={
+            "client_id": db_client.id,
+            "service_id": db_service.id,
+            "start_at": start_at.isoformat(),
+        },
+    )
+    appointment_id = create_response.json()["id"]
+
+    _, client_user_profile = create_client_user_and_profile(
+        db_session,
+        email="test-appointments-update-client@example.com",
+        password="secret123",
+        full_name="Test Client Appointment Update Not Allowed",
+    )
+    assert client_user_profile.id != db_client.id
+    client_headers = create_auth_headers(client, "test-appointments-update-client@example.com", "secret123")
+
+    response = client.patch(
+        f"/api/v1/appointments/{appointment_id}",
+        headers=client_headers,
+        json={"status": "cancelled"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions"
+
+
+def test_client_cannot_delete_appointment(client: TestClient, db_session: Session) -> None:
+    """Client users receive 403 when deleting appointments."""
+    create_admin(db_session, "test-appointments-delete-admin@example.com", "secret123")
+    admin_headers = create_auth_headers(client, "test-appointments-delete-admin@example.com", "secret123")
+    db_client = create_client(db_session, "Test Client Appointment Delete Forbidden")
+    db_service = create_service(db_session, "Service Appointment Delete Forbidden", duration_minutes=60)
+    start_at = _next_weekday_at(weekday=2, hour=12, minute=0)
+
+    create_response = client.post(
+        "/api/v1/appointments",
+        headers=admin_headers,
+        json={
+            "client_id": db_client.id,
+            "service_id": db_service.id,
+            "start_at": start_at.isoformat(),
+        },
+    )
+    appointment_id = create_response.json()["id"]
+
+    _, client_user_profile = create_client_user_and_profile(
+        db_session,
+        email="test-appointments-delete-client@example.com",
+        password="secret123",
+        full_name="Test Client Appointment Delete Not Allowed",
+    )
+    assert client_user_profile.id != db_client.id
+    client_headers = create_auth_headers(client, "test-appointments-delete-client@example.com", "secret123")
+
+    response = client.delete(f"/api/v1/appointments/{appointment_id}", headers=client_headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions"

@@ -15,11 +15,20 @@ class Settings(BaseSettings):
     postgres_db: str = "turnero"
     postgres_user: str = "turnero"
     postgres_password: str = "turnero"
+    tz: str = "America/Argentina/Buenos_Aires"
 
     secret_key: str = "change-me"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+    password_reset_token_expire_minutes: int = 30
+
+    email_enabled: bool = False
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    email_from: str = "Turnero Kala <no-reply@kala.local>"
+    admin_notify_email: str = "admin@kala.local"
+    frontend_url: str = "http://localhost:5173"
 
     @property
     def database_url(self) -> str:

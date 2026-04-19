@@ -14,7 +14,7 @@ class AppointmentCreate(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    client_id: int
+    client_id: int | None = None
     service_id: int
     start_at: datetime
     end_at: datetime | None = None

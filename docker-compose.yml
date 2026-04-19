@@ -13,5 +13,13 @@ services:
     volumes:
       - turnero_pgdata:/var/lib/postgresql/data
 
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: turnero_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
 volumes:
   turnero_pgdata:

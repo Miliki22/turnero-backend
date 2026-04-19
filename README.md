@@ -19,6 +19,10 @@ Backend del sistema Turnero (marca actual: **Kala Turnos**).
 docker compose up -d
 ```
 
+Incluye MailHog para emails en desarrollo:
+- SMTP: `localhost:1025`
+- UI: `http://localhost:8025`
+
 ### 2) Instalar dependencias
 ```bash
 python -m venv .venv
@@ -30,6 +34,13 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 ```
+
+Variables de email DEV (MailHog):
+- `EMAIL_ENABLED=true`
+- `SMTP_HOST=localhost`
+- `SMTP_PORT=1025`
+- `EMAIL_FROM="Turnero Kala <no-reply@kala.local>"`
+- `ADMIN_NOTIFY_EMAIL=admin@kala.local`
 
 ### 4) Aplicar migraciones
 ```bash
@@ -223,3 +234,13 @@ curl "http://127.0.0.1:8000/api/v1/appointments?client_id=1&date_from=2026-04-10
 ```bash
 pytest -q
 ```
+
+## Validación manual MailHog
+1. Levantar servicios:
+```bash
+docker compose up -d
+```
+2. Levantar backend y crear un turno con usuario `client`.
+3. Abrir `http://localhost:8025` y verificar 2 emails:
+- 1 al cliente autenticado
+- 1 a `ADMIN_NOTIFY_EMAIL`
