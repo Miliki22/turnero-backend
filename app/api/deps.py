@@ -12,7 +12,7 @@ from app.db.session import get_db
 from app.models.client import Client
 from app.models.user import User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
 
 def _credentials_exception() -> HTTPException:
@@ -63,6 +63,21 @@ def require_admin_user(current_user: User = Depends(get_current_active_user)) ->
 def require_admin_or_client_user(current_user: User = Depends(get_current_active_user)) -> User:
     """Ensure user role is either admin or client."""
     if current_user.role not in {"admin", "client"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    return current_user
+
+
+def get_current_client_user(current_user: User = Depends(get_current_active_user)) -> User:
+    """Ensure the authenticated user is a client (non-admin)."""
+    if current_user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    if current_user.role != "client":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions",

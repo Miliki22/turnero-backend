@@ -25,7 +25,8 @@ def get_password_hash(password: str) -> str:
 
 def authenticate_user(db: Session, email: str, password: str) -> User | None:
     """Authenticate an active user by email and password."""
-    user = db.query(User).filter(User.email == email).first()
+    normalized_email = email.strip().lower()
+    user = db.query(User).filter(User.email == normalized_email).first()
     if user is None:
         return None
 

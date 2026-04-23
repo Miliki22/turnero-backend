@@ -14,7 +14,10 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.appointment import Appointment
+from app.models.client import Client
 from app.models.google_integration import GoogleIntegration
+from app.models.service import Service
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -164,7 +167,7 @@ def get_integration_status(db: Session, admin_user_id: int) -> dict[str, Any]:
         return {"connected": False, "calendar_id": settings.google_calendar_id or "primary", "email": None}
     return {
         "connected": True,
-        "calendar_id": integration.calendar_id,
+        "calendar_id": settings.google_calendar_id or integration.calendar_id or "primary",
         "email": integration.email,
     }
 
@@ -238,28 +241,196 @@ class GoogleCalendarClient:
             return None
         return response.json()
 
-    def create_event(self, event_payload: dict[str, Any]) -> str:
-        calendar_id = quote(self.integration.calendar_id, safe="")
-        url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
+    def _resolve_calendar_id(self, calendar_id: str | None = None) -> str:
+        """Resolve calendar target, preferring configured env calendar id."""
+        return calendar_id or settings.google_calendar_id or self.integration.calendar_id or "primary"
+
+    def create_event(self, event_payload: dict[str, Any], *, calendar_id: str | None = None) -> str:
+        target_calendar_id = quote(self._resolve_calendar_id(calendar_id=calendar_id), safe="")
+        url = f"https://www.googleapis.com/calendar/v3/calendars/{target_calendar_id}/events"
         data = self._request("POST", url, json_body=event_payload) or {}
         event_id = data.get("id")
         if not isinstance(event_id, str) or not event_id:
             raise ValueError("Google event id missing")
         return event_id
 
-    def update_event(self, google_event_id: str, event_payload: dict[str, Any]) -> None:
-        calendar_id = quote(self.integration.calendar_id, safe="")
+    def update_event(
+        self,
+        google_event_id: str,
+        event_payload: dict[str, Any],
+        *,
+        calendar_id: str | None = None,
+    ) -> None:
+        target_calendar_id = quote(self._resolve_calendar_id(calendar_id=calendar_id), safe="")
         event_id = quote(google_event_id, safe="")
-        url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events/{event_id}"
+        url = f"https://www.googleapis.com/calendar/v3/calendars/{target_calendar_id}/events/{event_id}"
         self._request("PATCH", url, json_body=event_payload)
 
-    def delete_event(self, google_event_id: str) -> None:
-        calendar_id = quote(self.integration.calendar_id, safe="")
+    def delete_event(self, google_event_id: str, *, calendar_id: str | None = None) -> None:
+        target_calendar_id = quote(self._resolve_calendar_id(calendar_id=calendar_id), safe="")
         event_id = quote(google_event_id, safe="")
-        url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events/{event_id}"
+        url = f"https://www.googleapis.com/calendar/v3/calendars/{target_calendar_id}/events/{event_id}"
         self._request("DELETE", url)
 
 
 def get_google_calendar_client(db: Session, integration: GoogleIntegration) -> GoogleCalendarClient:
     """Factory to create Google calendar client (mockable in tests)."""
     return GoogleCalendarClient(db=db, integration=integration)
+
+
+def _build_appointment_event_payload(db: Session, appointment: Appointment) -> dict[str, Any] | None:
+    """Build Google Calendar event payload from an appointment."""
+    client = db.query(Client).filter(Client.id == appointment.client_id).first()
+    service = db.query(Service).filter(Service.id == appointment.service_id).first()
+    if client is None or service is None:
+        return None
+
+    return {
+        "summary": f"{service.name} - {client.full_name}",
+        "description": f"Cliente: {client.full_name}\nServicio: {service.name}",
+        "start": {"dateTime": appointment.start_at.isoformat()},
+        "end": {"dateTime": appointment.end_at.isoformat()},
+    }
+
+
+def sync_appointments_to_google(
+    db: Session,
+    *,
+    days_ahead: int = 90,
+    include_past_days: int = 0,
+) -> dict[str, int]:
+    """Backfill appointments into Google Calendar for a bounded date window."""
+    integration = get_connected_admin_integration(db=db)
+    if integration is None:
+        raise ValueError("Google integration is not connected")
+
+    client = get_google_calendar_client(db=db, integration=integration)
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=include_past_days)
+    window_end = now + timedelta(days=days_ahead)
+
+    appointments = (
+        db.query(Appointment)
+        .filter(
+            Appointment.start_at >= window_start,
+            Appointment.start_at <= window_end,
+        )
+        .order_by(Appointment.start_at.asc(), Appointment.id.asc())
+        .all()
+    )
+
+    counters = {
+        "scanned": len(appointments),
+        "created": 0,
+        "skipped_already_linked": 0,
+        "skipped_not_eligible": 0,
+        "errors": 0,
+    }
+
+    for appointment in appointments:
+        if appointment.status != "scheduled" or not appointment.is_active:
+            counters["skipped_not_eligible"] += 1
+            continue
+
+        if appointment.google_event_id:
+            counters["skipped_already_linked"] += 1
+            continue
+
+        event_payload = _build_appointment_event_payload(db=db, appointment=appointment)
+        if event_payload is None:
+            counters["skipped_not_eligible"] += 1
+            continue
+
+        try:
+            event_id = client.create_event(event_payload, calendar_id=settings.google_calendar_id or None)
+            appointment.google_event_id = event_id
+            db.add(appointment)
+            db.commit()
+            counters["created"] += 1
+        except Exception:
+            db.rollback()
+            counters["errors"] += 1
+            logger.warning(
+                "Failed to backfill Google event for appointment id=%s",
+                appointment.id,
+                exc_info=True,
+            )
+
+    return counters
+
+
+def cleanup_google_appointments(
+    db: Session,
+    *,
+    days_ahead: int = 365,
+    include_past_days: int = 30,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Cleanup legacy Google events and optionally reset local google_event_id links."""
+    integration = get_connected_admin_integration(db=db)
+    if integration is None:
+        raise ValueError("Google integration is not connected")
+
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=include_past_days)
+    window_end = now + timedelta(days=days_ahead)
+    appointments = (
+        db.query(Appointment)
+        .filter(
+            Appointment.start_at >= window_start,
+            Appointment.start_at <= window_end,
+            Appointment.google_event_id.is_not(None),
+        )
+        .order_by(Appointment.start_at.asc(), Appointment.id.asc())
+        .all()
+    )
+
+    result: dict[str, Any] = {
+        "scanned": len(appointments),
+        "deleted": 0,
+        "missing_in_google": 0,
+        "reset_in_db": 0,
+        "errors": 0,
+        "sample_appointment_ids": [appointment.id for appointment in appointments[:5]],
+        "dry_run": dry_run,
+    }
+
+    if dry_run:
+        return result
+
+    google_client = get_google_calendar_client(db=db, integration=integration)
+    for appointment in appointments:
+        if not appointment.google_event_id:
+            continue
+
+        try:
+            google_client.delete_event(appointment.google_event_id, calendar_id="primary")
+            result["deleted"] += 1
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                result["missing_in_google"] += 1
+            else:
+                result["errors"] += 1
+                logger.warning(
+                    "Failed to cleanup Google event id=%s for appointment id=%s",
+                    appointment.google_event_id,
+                    appointment.id,
+                    exc_info=True,
+                )
+                continue
+        except Exception:
+            result["errors"] += 1
+            logger.warning(
+                "Failed to cleanup Google event id=%s for appointment id=%s",
+                appointment.google_event_id,
+                appointment.id,
+                exc_info=True,
+            )
+            continue
+
+        appointment.google_event_id = None
+        db.add(appointment)
+        db.commit()
+        result["reset_in_db"] += 1
+
+    return result

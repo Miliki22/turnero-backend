@@ -1,10 +1,12 @@
 """Business logic for clients."""
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.models.appointment import Appointment
 from app.models.client import Client
 from app.models.user import User
 from app.schemas.client import ClientCreate, ClientUpdate
@@ -91,3 +93,53 @@ def delete_client(db: Session, client_id: int) -> None:
     client.is_active = False
     db.add(client)
     db.commit()
+
+
+def get_client_dashboard(db: Session, client_id: int, recent_limit: int = 10) -> dict[str, object]:
+    """Return dashboard data for one client."""
+    client = get_client(db=db, client_id=client_id)
+    now = datetime.now(timezone.utc)
+
+    next_appointment = (
+        db.query(Appointment)
+        .filter(
+            Appointment.client_id == client.id,
+            Appointment.is_active.is_(True),
+            Appointment.status == "scheduled",
+            Appointment.start_at >= now,
+        )
+        .order_by(Appointment.start_at.asc(), Appointment.id.asc())
+        .first()
+    )
+
+    recent_appointments = (
+        db.query(Appointment)
+        .filter(
+            Appointment.client_id == client.id,
+            Appointment.is_active.is_(True),
+        )
+        .order_by(Appointment.start_at.desc(), Appointment.id.desc())
+        .limit(recent_limit)
+        .all()
+    )
+
+    active_appointments = (
+        db.query(Appointment)
+        .filter(
+            Appointment.client_id == client.id,
+            Appointment.is_active.is_(True),
+        )
+        .all()
+    )
+    total_appointments = len(active_appointments)
+    last_appointment_at = max((item.start_at for item in active_appointments), default=None)
+
+    return {
+        "client": client,
+        "next_appointment": next_appointment,
+        "recent_appointments": recent_appointments,
+        "stats": {
+            "total_appointments": total_appointments,
+            "last_appointment_at": last_appointment_at,
+        },
+    }

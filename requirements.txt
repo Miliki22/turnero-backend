@@ -23,6 +23,7 @@ Pygments==2.19.2
 pytest==9.0.2
 python-dotenv==1.2.2
 python-jose[cryptography]==3.5.0
+python-multipart==0.0.20
 PyYAML==6.0.3
 SQLAlchemy==2.0.48
 starlette==0.52.1

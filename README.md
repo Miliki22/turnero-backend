@@ -96,6 +96,27 @@ GOOGLE_SYNC_ENABLED=true
 - `GET /api/v1/integrations/google/callback`
 - `GET /api/v1/integrations/google/status`
 - `POST /api/v1/integrations/google/disconnect`
+- `POST /api/v1/integrations/google/sync?days_ahead=90&include_past_days=0`
+- `POST /api/v1/integrations/google/cleanup?days_ahead=365&include_past_days=30&dry_run=true`
+
+Obtener token OAuth2 (Swagger-compatible, form-urlencoded):
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/auth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=admin@kala.com&password=TuPassSegura123!"
+```
+
+Ejecutar sync/backfill:
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/integrations/google/sync?days_ahead=90&include_past_days=0" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+Limpieza de eventos creados en calendario equivocado (legacy `primary`):
+```bash
+curl -X POST "http://127.0.0.1:8000/api/v1/integrations/google/cleanup?days_ahead=365&include_past_days=30&dry_run=true" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
 
 Notas:
 - No commitear secretos OAuth.
@@ -248,6 +269,41 @@ curl http://127.0.0.1:8000/api/v1/appointments \
 ```bash
 curl "http://127.0.0.1:8000/api/v1/appointments?client_id=1&date_from=2026-04-10T00:00:00+00:00&date_to=2026-04-11T00:00:00+00:00" \
   -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+## Flujo Cliente (reserva)
+Endpoints para usuario `client` autenticado.
+
+### Listar servicios activos
+```bash
+curl http://127.0.0.1:8000/api/v1/client/services \
+  -H "Authorization: Bearer <ACCESS_TOKEN_CLIENT>"
+```
+
+### Ver disponibilidad por servicio y rango
+```bash
+curl "http://127.0.0.1:8000/api/v1/client/availability?service_id=1&range=week&start_date=2026-04-27" \
+  -H "Authorization: Bearer <ACCESS_TOKEN_CLIENT>"
+```
+
+`range`: `week` o `fortnight` (default `week`).  
+`start_date` opcional en formato `YYYY-MM-DD`.
+
+### Reservar turno como cliente
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/client/appointments \
+  -H "Authorization: Bearer <ACCESS_TOKEN_CLIENT>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_id": 1,
+    "start_at": "2026-04-27T10:00:00-03:00"
+  }'
+```
+
+### Mis turnos (historial + próximos)
+```bash
+curl "http://127.0.0.1:8000/api/v1/client/appointments?limit=50&offset=0" \
+  -H "Authorization: Bearer <ACCESS_TOKEN_CLIENT>"
 ```
 
 ## Ejecutar tests

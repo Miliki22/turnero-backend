@@ -1,6 +1,10 @@
 """Schemas for client endpoints."""
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.appointment import AppointmentOut
 
 
 class ClientCreate(BaseModel):
@@ -38,3 +42,19 @@ class ClientOut(BaseModel):
     email: str | None
     notes: str | None
     is_active: bool
+
+
+class ClientDashboardStatsOut(BaseModel):
+    """Aggregated client dashboard metrics."""
+
+    total_appointments: int
+    last_appointment_at: datetime | None
+
+
+class ClientDashboardOut(BaseModel):
+    """Client dashboard response payload."""
+
+    client: ClientOut
+    next_appointment: AppointmentOut | None
+    recent_appointments: list[AppointmentOut]
+    stats: ClientDashboardStatsOut

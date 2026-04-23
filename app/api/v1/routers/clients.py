@@ -1,16 +1,17 @@
 """Client routes."""
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_client_or_403, require_admin_user
 from app.db.session import get_db
 from app.models.client import Client
 from app.models.user import User
-from app.schemas.client import ClientCreate, ClientOut, ClientUpdate
+from app.schemas.client import ClientCreate, ClientDashboardOut, ClientOut, ClientUpdate
 from app.services.client_service import (
     create_client,
     delete_client,
+    get_client_dashboard,
     get_client,
     list_clients,
     update_client,
@@ -56,6 +57,17 @@ def get_client_endpoint(
 ) -> ClientOut:
     """Return one client by id (admin-only)."""
     return get_client(db=db, client_id=client_id)
+
+
+@router.get("/{client_id}/dashboard", response_model=ClientDashboardOut)
+def get_client_dashboard_endpoint(
+    client_id: int,
+    recent_limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_user),
+) -> ClientDashboardOut:
+    """Return dashboard data for a client (admin-only)."""
+    return get_client_dashboard(db=db, client_id=client_id, recent_limit=recent_limit)
 
 
 @router.patch("/{client_id}", response_model=ClientOut)

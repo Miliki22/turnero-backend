@@ -54,6 +54,24 @@ def test_login_invalid_password(client: TestClient, db_session: Session) -> None
     assert response.json()["detail"] == "Invalid email or password"
 
 
+def test_token_oauth2_form_ok(client: TestClient, db_session: Session) -> None:
+    """OAuth2 token endpoint accepts form data and returns token pair."""
+    create_admin(db_session, "test-auth-token@example.com", "secret123")
+
+    response = client.post(
+        "/api/v1/auth/token",
+        data={"username": "test-auth-token@example.com", "password": "secret123"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["token_type"] == "bearer"
+    assert isinstance(data["access_token"], str)
+    assert isinstance(data["refresh_token"], str)
+    assert data["access_token"]
+    assert data["refresh_token"]
+
+
 def test_me_requires_token(client: TestClient) -> None:
     """Protected endpoint rejects missing bearer token."""
     response = client.get("/api/v1/auth/me")
@@ -106,6 +124,33 @@ def test_register_creates_user_and_client(client: TestClient, db_session: Sessio
     assert linked_client is not None
     assert linked_client.full_name == "Test Register User"
     assert linked_client.phone == "+5491111112222"
+
+
+def test_register_then_login_with_same_credentials(client: TestClient) -> None:
+    """Registered client credentials must work on JSON login endpoint."""
+    register_response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Test Register Login",
+            "phone": "+5491111113333",
+            "email": "TeSt-Reg-Login@example.com",
+            "password": "MySafePass123!",
+        },
+    )
+    assert register_response.status_code == 201
+
+    login_response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "test-reg-login@example.com", "password": "MySafePass123!"},
+    )
+
+    assert login_response.status_code == 200
+    data = login_response.json()
+    assert data["token_type"] == "bearer"
+    assert isinstance(data["access_token"], str)
+    assert isinstance(data["refresh_token"], str)
+    assert data["access_token"]
+    assert data["refresh_token"]
 
 
 def test_forgot_password_always_returns_200(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:

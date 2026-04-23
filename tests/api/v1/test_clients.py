@@ -1,9 +1,13 @@
 """Client API tests."""
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.models.appointment import Appointment
 from app.models.client import Client
+from app.models.service import Service
 from app.models.user import User
 from app.services.auth_service import get_password_hash
 
@@ -46,6 +50,15 @@ def create_linked_client(db: Session, full_name: str, email: str, is_active: boo
     db.commit()
     db.refresh(client)
     return client
+
+
+def create_service(db: Session, name: str) -> Service:
+    """Create a service row for appointments tests."""
+    service = Service(name=name, duration_minutes=60, is_active=True)
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+    return service
 
 
 def test_create_client(client: TestClient, db_session: Session) -> None:
@@ -220,6 +233,73 @@ def test_non_admin_cannot_delete_client(client: TestClient, db_session: Session)
     )
 
     response = client.delete(f"/api/v1/clients/{existing.id}", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions"
+
+
+def test_get_client_dashboard_admin(client: TestClient, db_session: Session) -> None:
+    """Admin can fetch dashboard with next/recent appointments and stats."""
+    create_user(db_session, "test-clients-dashboard-admin@example.com", "secret123", role="admin")
+    headers = create_auth_headers(client, "test-clients-dashboard-admin@example.com", "secret123")
+    linked_client = create_linked_client(
+        db_session,
+        full_name="Test Client Dashboard",
+        email="test-clients-dashboard-linked@example.com",
+        is_active=True,
+    )
+    service = create_service(db_session, "Service Dashboard")
+    now = datetime.now(timezone.utc)
+    past_start = now - timedelta(days=1)
+    future_start = now + timedelta(days=2)
+    old_appointment = Appointment(
+        client_id=linked_client.id,
+        service_id=service.id,
+        start_at=past_start,
+        end_at=past_start + timedelta(minutes=60),
+        status="scheduled",
+        is_active=True,
+    )
+    next_appointment = Appointment(
+        client_id=linked_client.id,
+        service_id=service.id,
+        start_at=future_start,
+        end_at=future_start + timedelta(minutes=60),
+        status="scheduled",
+        is_active=True,
+    )
+    db_session.add_all([old_appointment, next_appointment])
+    db_session.commit()
+    db_session.refresh(old_appointment)
+    db_session.refresh(next_appointment)
+
+    response = client.get(
+        f"/api/v1/clients/{linked_client.id}/dashboard?recent_limit=10",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["client"]["id"] == linked_client.id
+    assert data["next_appointment"] is not None
+    assert data["next_appointment"]["id"] == next_appointment.id
+    assert len(data["recent_appointments"]) == 2
+    assert data["stats"]["total_appointments"] == 2
+    assert data["stats"]["last_appointment_at"] is not None
+
+
+def test_get_client_dashboard_non_admin_forbidden(client: TestClient, db_session: Session) -> None:
+    """Non-admin users cannot access admin dashboard endpoint."""
+    create_user(db_session, "test-clients-dashboard-non-admin@example.com", "secret123", role="client")
+    headers = create_auth_headers(client, "test-clients-dashboard-non-admin@example.com", "secret123")
+    linked_client = create_linked_client(
+        db_session,
+        full_name="Test Client Dashboard Forbidden",
+        email="test-clients-dashboard-forbidden@example.com",
+        is_active=True,
+    )
+
+    response = client.get(f"/api/v1/clients/{linked_client.id}/dashboard", headers=headers)
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Not enough permissions"

@@ -3,6 +3,8 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
@@ -35,7 +37,25 @@ logger = logging.getLogger(__name__)
 @router.post("/login", response_model=Token)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
     """Authenticate an active user and return an access/refresh token pair."""
-    user = authenticate_user(db=db, email=payload.email, password=payload.password)
+    normalized_email = payload.email.strip().lower()
+    user = authenticate_user(db=db, email=normalized_email, password=payload.password)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    return Token(
+        access_token=create_access_token(subject=user.email),
+        refresh_token=create_refresh_token(subject=user.email),
+    )
+
+
+@router.post("/token", response_model=Token)
+def token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> Token:
+    """OAuth2-compatible password flow endpoint for Swagger Authorize."""
+    normalized_email = form_data.username.strip().lower()
+    user = authenticate_user(db=db, email=normalized_email, password=form_data.password)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -57,15 +77,16 @@ def me(current_user: User = Depends(get_current_active_user)) -> dict[str, str]:
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Token:
     """Register a new client user and linked client profile."""
-    existing_user = db.query(User).filter(User.email == payload.email).first()
+    normalized_email = payload.email.strip().lower()
+    existing_user = db.query(User).filter(func.lower(User.email) == normalized_email).first()
     if existing_user is not None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
         )
 
     user = User(
-        email=payload.email,
+        email=normalized_email,
         password_hash=get_password_hash(payload.password),
         role="client",
         is_active=True,
@@ -77,7 +98,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Token:
         user_id=user.id,
         full_name=payload.full_name,
         phone=payload.phone,
-        email=payload.email,
+        email=normalized_email,
         notes=None,
         is_active=True,
     )
